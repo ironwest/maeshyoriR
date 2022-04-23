@@ -353,7 +353,6 @@ imap(dat6, ~{
 })
 
 imap_dfc(dat6, ~{
-  
   apply_codebook(.x, .y, d)
 })
 
@@ -437,8 +436,8 @@ gen_g2 <- function(tgtpref, prefdat){
 
 gen_model <- function(prefdat){
   model <- glm(is_death ~ hiruyoru + weather + romen, family = binomial(link = "logit"), data = prefdat)
-  modelres <- summary(model)
-  return(modelres)
+
+  return(model)
 }
 
 #これら4つの関数を全ての都道府県の区別
@@ -465,10 +464,10 @@ ndat
 
 final <- ndat %>% 
   mutate(
-    processed_data = map2(pref, data          , ~{syori_dat(.,dat)}),
-    g1             = map2(pref, processed_data, ~{gen_g1(.x,.y)}),
-    g2             = map2(pref, processed_data, ~{gen_g2(.x,.y)}),
-    mod            = map(processed_data, ~{tryCatch(gen_model(.),error=function(e)e)})
+    procdat = map(pref,           ~{syori_dat(.,dat)}),
+    g1      = map2(pref, procdat, ~{gen_g1(.x,.y)}),
+    g2      = map2(pref, procdat, ~{gen_g2(.x,.y)}),
+    mod     = map(procdat       , ~{tryCatch(gen_model(.),error=function(e)e)})
   )
 
 #出来上がりました。これは
@@ -477,20 +476,100 @@ final
 #な感じで、g1g2mod列それぞれに、ggplotのグラフ二つと、モデル一つが含まれています。
 #これ、例えば、10番の山形の結果を確認したい場合は、
 
-yamagata <- final %>% 
-  filter(pref == "山形")
+yamagata <- final %>% filter(pref == "山形")
 
-yamagata$processed_data[[1]]
+yamagata$procdat[[1]]
 yamagata$g1[[1]]
 yamagata$g2[[1]]
 yamagata$mod[[1]]
 
 #このように取り出すことができました。
 
-#この使い型、「核」となるようそをうまく
-dat
-#のように取り出すこと、指定することができたら、map関数を利用して、
-#様々な結果を一つの表オブジェクトの中に保持することができるので、
-#是非使い型をマスターしてみてください。
+#この使い型、「核」となる要素をうまく
+#取り出すこと、指定することができたら、map関数を利用して、
+#様々な結果を一つの表オブジェクトの中に保持することができます
+
+#ひとつひとつ取り出す他にも、
+#モデルから係数とP値を取り出して都道府県別の結果のグラフを
+#作成するようなことも可能です。
 #
-#以上となります。ご清聴ありがとうございました！
+#例えば、天気による死亡事故の有無を都道府県でのデータ別に
+#取り出して見てあげたいような場合は、
+
+final$mod[[1]] %>% 
+broom::tidy() %>% 
+  filter( str_detect(term,"weather"))
+
+#を都道府県別に実施してあげて
+
+final %>% 
+  mutate(weather = map(mod, ~{
+    broom::tidy(.) %>% filter(str_detect(term,"weather")) %>% return()
+  }))
+  
+#その結果を表にして、
+
+final %>% 
+  mutate(weather = map(mod, ~{
+    broom::tidy(.) %>% filter(str_detect(term,"weather")) %>% return()
+  })) %>% 
+  select(pref, weather) %>% 
+  unnest(weather)
+
+#さらにtermが雨の場合の結果、霧の場合の結果、雪の場合の結果にnestした
+#tibbleにしてあげて、
+
+final2 <- final %>% 
+  mutate(weather = map(mod, ~{
+    broom::tidy(.) %>% filter(str_detect(term,"weather")) %>% return()
+  })) %>% 
+  select(pref, weather) %>% 
+  unnest(weather) %>% 
+  group_by(term) %>% 
+  nest()
+
+#nestしたdata列一つをグラフにするには、
+final2$data[[1]] %>% 
+  ggplot() +
+  geom_col(aes(x = exp(estimate), y = reorder(pref,estimate), fill = p.value<0.05)) +
+  labs(x = "OR", y = "都道府県")
+
+#このようにすればよいので、これをfinal2に適応してあげると、
+final2 <- final2 %>% 
+  mutate(gg = map2(data,term, ~{
+    ggplot(.x) +
+      geom_col(aes(x = exp(estimate), y = reorder(pref,estimate), fill = p.value<0.05)) +
+      labs(x = "OR", y = "都道府県", title = .y)
+  }))
+
+final2
+
+#あとは、gg列に含まれるグラフをcowplotなどでまとめると、
+
+cowplot::plot_grid(plotlist = final2$gg)
+
+#こんな結果になりました。
+#（分析内容については、今回、モデルの適合等を
+#検証しているわけではないので、あくまで「こういうこともできる」
+#という見本のような形で結果については無視していただけると幸いです）
+
+
+#mapについて、以上となります。最初はわかりにくいことも
+#多いかもしれませんが、使っていくうちにリストを
+#mapで操作する感覚がつかめるようになると思います。
+#
+#ご清聴ありがとうございました！
+
+
+
+
+#宣伝：
+# Udemyの動画へのクーポンを含むリンク（ブログサイト）:
+# 　　https://r-online-course.netlify.app/#hero
+
+# 書籍：Rでらくらくデータ分析入門：
+#　　技術評論社Ｗｅｂページ：https://gihyo.jp/book/2022/978-4-297-12514-1
+#　　アマゾン：https://amzn.to/3OvMHER
+
+# purrr::mapについて解説した過去のブログ記事
+#https://r-online-course.netlify.app/post/2021-09-30-use-maps-in-tibble/
